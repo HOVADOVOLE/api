@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional
 from datetime import datetime
 
 
@@ -20,7 +20,7 @@ class CriticalSensor(BaseModel):
 class CriticalSensorsResponseModel(BaseModel):
     critical_sensors: List[CriticalSensor]
 class DeviceModel(BaseModel):
-    device: Optional[str] = None  # `device` může být None, pokud je prázdný objekt
+    device: Optional[str] = None
 
 class AnalyzeCO2ResponseModel(BaseModel):
     critical_devices: List[DeviceModel]
@@ -32,6 +32,6 @@ class PeopleEstimationResponse(BaseModel):
 class SensorEstimation(BaseModel):
     time_estimates: List[TimeEstimate]
 class SensorsEstimatesResponse(BaseModel):
-    sensors_estimates: Dict[str, SensorEstimation]
+    sensors_estimates: List[SensorEstimation]
 class NotFoundModel(BaseModel):
     detail: str
