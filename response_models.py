@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 
 
@@ -32,6 +32,6 @@ class PeopleEstimationResponse(BaseModel):
 class SensorEstimation(BaseModel):
     time_estimates: List[TimeEstimate]
 class SensorsEstimatesResponse(BaseModel):
-    sensors_estimates: List[SensorEstimation]
+    sensors_estimates: Dict[str, SensorEstimation]
 class NotFoundModel(BaseModel):
     detail: str
