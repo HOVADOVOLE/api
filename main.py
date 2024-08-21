@@ -323,7 +323,7 @@ async def get_number_of_people_in_object(
                     times.append(datetime.fromisoformat(data_point["time"]))
 
         if not co2_levels:
-            return response_models.PeopleEstimationResponse(time_estimates=[], total_people=0)
+            return response_models.PeopleEstimationResponse(time_estimates=[])
 
         # Vytvoření DataFrame
         df = pd.DataFrame({'co2': co2_levels}, index=times)
@@ -361,9 +361,6 @@ async def get_number_of_people_in_object(
         # Vytvoření seznamu časových odhadů
         time_estimates = [{"time": time, "people_estimate": int(people)} for time, people in
                           zip(df.index, df['people_estimate'])]
-
-        # Celkový součet všech lidí za daný časový úsek
-        total_people = df['people_estimate'].sum()
 
         # Odpověď obsahující odhady počtu lidí v čase a celkový počet lidí
         return response_models.PeopleEstimationResponse(time_estimates=time_estimates)
@@ -411,7 +408,7 @@ async def get_number_of_people_per_sensor(
                     times.append(datetime.fromisoformat(data_point["time"]))
 
             if not co2_levels:
-                sensors_estimates[record["device"]] = {"time_estimates": [], "total_people": 0}
+                sensors_estimates[record["device"]] = {"time_estimates": []}
                 continue
 
             # Vytvoření DataFrame
@@ -443,8 +440,6 @@ async def get_number_of_people_per_sensor(
             time_estimates = [{"time": time, "people_estimate": int(people)} for time, people in
                               zip(df.index, df['people_estimate'])]
 
-            # Celkový součet všech lidí za daný časový úsek
-            total_people = df['people_estimate'].sum()
 
             # Uložení odhadů pro daný senzor
             sensors_estimates[record["device"]] = {"time_estimates": time_estimates}
