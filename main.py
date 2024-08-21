@@ -3,13 +3,14 @@ import requests
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict
+from typing import List, Dict, Union
 from dotenv import load_dotenv
 import httpx
 import pandas as pd
 from fastapi.responses import JSONResponse
 import response_models
 import numpy as np
+from pykalman import KalmanFilter
 
 # Načtení .env.local souboru
 load_dotenv('.env.local')
@@ -123,7 +124,6 @@ async def analyze_place(
     start: datetime = Query(..., description="Časový údaj začátku ve formátu ISO 8601", example="2024-08-14T08:00:00"),
     stop: datetime = Query(..., description="Časový údaj konce ve formátu ISO 8601", example="2024-08-14T10:00:00")
 ):
-
     endpoint = f"{API_URL}/records/{url}/?start={start}&stop={stop}&concat_last=false&csv=false&children=false&only_key_devices=false"
 
     data = await return_data_drom_endpoint(endpoint)
@@ -132,14 +132,18 @@ async def analyze_place(
     co2_changes_down = 0
 
     for device in data:
-        co2_values = [entry['co2'] for entry in device['data'] if 'co2' in entry]
+        co2_values = np.array([entry['co2'] for entry in device['data'] if 'co2' in entry])
 
-        for i in range(1, len(co2_values)):
-            deriv = co2_values[i] - co2_values[i - 1]
-            if deriv > 0:
-                co2_changes_up += 1
-            elif deriv < 0:
-                co2_changes_down += 1
+        if len(co2_values) > 1:
+            first_derivative = np.diff(co2_values)
+
+            #second_derivative = np.diff(first_derivative)
+
+            zero_crossings_up = np.where(np.diff(np.sign(first_derivative)) > 0)[0]
+            zero_crossings_down = np.where(np.diff(np.sign(first_derivative)) < 0)[0]
+
+            co2_changes_up += len(zero_crossings_up)
+            co2_changes_down += len(zero_crossings_down)
 
     return JSONResponse(content={"co2_increase_count": co2_changes_up, "co2_decrease_count": co2_changes_down})
 @app.get("/records/analyze_co2_dissipation/place/{url}/", response_model=response_models.CO2DissipationResponseModel)
@@ -254,7 +258,7 @@ async def analyze_co2_dissipation(
 #    except Exception as e:
 #        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/analyze_co2/", response_model=response_models.AnalyzeCO2ResponseModel)
+@app.post("/analyze_co2/", response_model=Union[response_models.AnalyzeCO2ResponseModel, response_models.NotFoundModel])
 async def analyze_co2(
     url: str = Query(..., description="Url adresa místa", example="dcuk"),
     start: datetime = Query(..., description="Časový údaj začátku ve formátu ISO 8601", example="2024-08-14T08:00:00"),
@@ -291,6 +295,167 @@ async def analyze_co2(
 
     return JSONResponse(content={"critical_devices": critical_devices})
 
+
+@app.get("/records/number_of_people/place/{url}/", response_model=response_models.PeopleEstimationResponse)
+async def get_number_of_people_in_object(
+        url: str = Path(..., description="Url adresa místa", example="dcuk"),
+        start: datetime = Query(..., description="Startovní datum a čas", example="2024-08-21T08:00:00"),
+        stop: datetime = Query(..., description="Koncové datum a čas", example="2024-08-21T10:00:00")
+):
+    # Validace datového intervalu
+    if start >= stop:
+        raise HTTPException(status_code=400, detail="Start time must be earlier than stop time.")
+
+    try:
+        # Simulace stažení dat
+        records = fetch_records(url, start.strftime("%Y-%m-%d %H:%M:%S.%f"), stop.strftime("%Y-%m-%d %H:%M:%S.%f"))
+
+        if records is None:
+            raise HTTPException(status_code=404, detail="Data not found for the given URL.")
+
+        co2_levels = []
+        times = []
+
+        for record in records:
+            for data_point in record["data"]:
+                if "co2" in data_point:
+                    co2_levels.append(data_point["co2"])
+                    times.append(datetime.fromisoformat(data_point["time"]))
+
+        if not co2_levels:
+            return response_models.PeopleEstimationResponse(time_estimates=[], total_people=0)
+
+        # Vytvoření DataFrame
+        df = pd.DataFrame({'co2': co2_levels}, index=times)
+
+        # Základní koncentrace CO2 (480 ppm v noci, kdy se nepředpokládá přítomnost lidí)
+        baseline_co2 = 480
+
+        # Model Kalmanova filtru
+        transition_matrix = [[1]]  # Předpokládáme, že stav CO2 se mění lineárně
+        observation_matrix = [[1]]  # Měřená hodnota je přímo CO2
+        initial_state_mean = baseline_co2
+        initial_state_covariance = 1
+        transition_covariance = np.eye(1) * 0.1  # Procesní šum
+        observation_covariance = np.eye(1) * 1  # Měřicí šum
+
+        kf = KalmanFilter(
+            transition_matrices=transition_matrix,
+            observation_matrices=observation_matrix,
+            initial_state_mean=initial_state_mean,
+            initial_state_covariance=initial_state_covariance,
+            transition_covariance=transition_covariance,
+            observation_covariance=observation_covariance
+        )
+
+        # Aplikace Kalmanova filtru na data
+        state_means, _ = kf.filter(df['co2'].values)
+
+        # Odhad počtu lidí na základě filtru a rozdílu od baseline
+        df['filtered_co2'] = state_means
+        df['people_estimate'] = (df['filtered_co2'] - baseline_co2) / 2.0  # Převod na počet lidí
+
+        # Zaokrouhlení a ošetření záporných hodnot
+        df['people_estimate'] = df['people_estimate'].apply(lambda x: max(int(round(x)), 0))
+
+        # Vytvoření seznamu časových odhadů
+        time_estimates = [{"time": time, "people_estimate": int(people)} for time, people in
+                          zip(df.index, df['people_estimate'])]
+
+        # Celkový součet všech lidí za daný časový úsek
+        total_people = df['people_estimate'].sum()
+
+        # Odpověď obsahující odhady počtu lidí v čase a celkový počet lidí
+        return response_models.PeopleEstimationResponse(time_estimates=time_estimates)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Value error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.get("/records/number_of_people_per_sensor/place/{url}/", response_model=response_models.SensorsEstimatesResponse)
+async def get_number_of_people_per_sensor(
+        url: str = Path(..., description="Url adresa místa", example="dcuk"),
+        start: datetime = Query(..., description="Startovní datum a čas", example="2024-08-21T08:00:00"),
+        stop: datetime = Query(..., description="Koncové datum a čas", example="2024-08-21T10:00:00")
+):
+    # Validace datového intervalu
+    if start >= stop:
+        raise HTTPException(status_code=400, detail="Start time must be earlier than stop time.")
+
+    try:
+        # Simulace stažení dat
+        records = fetch_records(url, start.strftime("%Y-%m-%d %H:%M:%S.%f"), stop.strftime("%Y-%m-%d %H:%M:%S.%f"))
+
+        if records is None:
+            raise HTTPException(status_code=404, detail="Data not found for the given URL.")
+
+        sensors_estimates = {}
+        baseline_co2 = 480
+
+        # Parametry Kalmanova filtru
+        transition_matrix = [[1]]
+        observation_matrix = [[1]]
+        initial_state_covariance = 1
+        transition_covariance = np.eye(1) * 0.1
+        observation_covariance = np.eye(1) * 1
+
+        for record in records:
+            co2_levels = []
+            times = []
+
+            for data_point in record["data"]:
+                if "co2" in data_point:
+                    co2_levels.append(data_point["co2"])
+                    times.append(datetime.fromisoformat(data_point["time"]))
+
+            if not co2_levels:
+                sensors_estimates[record["device"]] = {"time_estimates": [], "total_people": 0}
+                continue
+
+            # Vytvoření DataFrame
+            df = pd.DataFrame({'co2': co2_levels}, index=times)
+
+            # Počáteční stav pro každý senzor
+            initial_state_mean = baseline_co2
+
+            kf = KalmanFilter(
+                transition_matrices=transition_matrix,
+                observation_matrices=observation_matrix,
+                initial_state_mean=initial_state_mean,
+                initial_state_covariance=initial_state_covariance,
+                transition_covariance=transition_covariance,
+                observation_covariance=observation_covariance
+            )
+
+            # Aplikace Kalmanova filtru na data
+            state_means, _ = kf.filter(df['co2'].values)
+
+            # Odhad počtu lidí na základě filtru a rozdílu od baseline
+            df['filtered_co2'] = state_means
+            df['people_estimate'] = (df['filtered_co2'] - baseline_co2) / 2.0
+
+            # Zaokrouhlení a ošetření záporných hodnot
+            df['people_estimate'] = df['people_estimate'].apply(lambda x: max(int(round(x)), 0))
+
+            # Vytvoření seznamu časových odhadů
+            time_estimates = [{"time": time, "people_estimate": int(people)} for time, people in
+                              zip(df.index, df['people_estimate'])]
+
+            # Celkový součet všech lidí za daný časový úsek
+            total_people = df['people_estimate'].sum()
+
+            # Uložení odhadů pro daný senzor
+            sensors_estimates[record["device"]] = {"time_estimates": time_estimates}
+
+        # Odpověď obsahující odhady počtu lidí pro každý senzor
+        return response_models.SensorsEstimatesResponse(sensors_estimates=sensors_estimates)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Value error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 async def return_data_drom_endpoint(endpoint: str):
     '''
         Funkce sloužící pro vracení dat z endpointu z api
@@ -306,6 +471,9 @@ def fetch_records(url: str, start: str, stop: str) -> Dict:
     """
     Funkce pro stahování záznamů z API.
     """
-    endpoint = f"/records/{url}/?start={start}&stop={stop}&concat_last=false&csv=false&children=false&only_key_devices=false"
-    response = requests.get(API_URL + endpoint, headers=headers)
-    return response.json()
+    try:
+        endpoint = f"/records/{url}/?start={start}&stop={stop}&concat_last=false&csv=false&children=false&only_key_devices=false"
+        response = requests.get(API_URL + endpoint, headers=headers)
+        return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

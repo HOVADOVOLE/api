@@ -1,5 +1,6 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
+from datetime import datetime
 
 
 class NumberOfZeroCrossingsResponseModel(BaseModel):
@@ -23,3 +24,14 @@ class DeviceModel(BaseModel):
 
 class AnalyzeCO2ResponseModel(BaseModel):
     critical_devices: List[DeviceModel]
+class TimeEstimate(BaseModel):
+    time: datetime
+    people_estimate: int
+class PeopleEstimationResponse(BaseModel):
+    time_estimates: List[TimeEstimate]
+class SensorEstimation(BaseModel):
+    time_estimates: List[TimeEstimate]
+class SensorsEstimatesResponse(BaseModel):
+    sensors_estimates: Dict[str, SensorEstimation]
+class NotFoundModel(BaseModel):
+    detail: str
