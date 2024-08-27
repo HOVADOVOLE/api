@@ -180,7 +180,7 @@ async def analyze_place_co2_dissipation(
     average_dissipation_time = sum(dissipation_times) / len(dissipation_times)
 
     return JSONResponse(content={"average_dissipation_time_minutes": average_dissipation_time})
-@app.get("/records/analyze_co2_dissipation/device/{device}/", response_model=response_models.CO2DissipationResponseModel)
+@app.get("/records/analyze_co2_dissipation/device/{device}/", response_model=response_models.CO2DissipationResponseModel, responses={500: {"model": response_models.ErrorModelResponse}})
 async def analyze_co2_dissipation(
     device: str = Path(..., description="Název zařízení", example="eui-70b3d57ed006209f-co-05"),
     start: datetime = Query(..., description="Časový údaj začátku ve formátu ISO 8601", example="2024-08-14T08:00:00"),
@@ -258,7 +258,7 @@ async def analyze_co2_dissipation(
 #    except Exception as e:
 #        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/analyze_co2/", response_model=Union[response_models.AnalyzeCO2ResponseModel, response_models.NotFoundModel])
+@app.post("/analyze_co2/", response_model=response_models.AnalyzeCO2ResponseModel, responses={404: {"model": response_models.ErrorModelResponse}})
 async def analyze_co2(
     url: str = Query(..., description="Url adresa místa", example="dcuk"),
     start: datetime = Query(..., description="Časový údaj začátku ve formátu ISO 8601", example="2024-08-14T08:00:00"),
@@ -291,12 +291,12 @@ async def analyze_co2(
             critical_devices.append({"device": device['device']})
 
     if not critical_devices:
-        raise HTTPException(status_code=200, detail="No critical devices found.")
+        raise HTTPException(status_code=404, detail="No critical devices found.")
 
     return JSONResponse(content={"critical_devices": critical_devices})
 
 
-@app.get("/records/number_of_people/place/{url}/", response_model=response_models.PeopleEstimationResponse)
+@app.get("/records/number_of_people/place/{url}/", response_model=response_models.PeopleEstimationResponse, responses={404: {"model": response_models.ErrorModelResponse}, 400: {"model": response_models.ErrorModelResponse}, 500: {"model": response_models.ErrorModelResponse}})
 async def get_number_of_people_in_object(
         url: str = Path(..., description="Url adresa místa", example="dcuk"),
         start: datetime = Query(..., description="Startovní datum a čas", example="2024-08-21T08:00:00"),
@@ -371,7 +371,7 @@ async def get_number_of_people_in_object(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@app.get("/records/number_of_people_per_sensor/place/{url}/", response_model=response_models.SensorsEstimatesResponse)
+@app.get("/records/number_of_people_per_sensor/place/{url}/", response_model=response_models.SensorsEstimatesResponse, responses={404: {"model": response_models.ErrorModelResponse}, 400: {"model": response_models.ErrorModelResponse}, 500: {"model": response_models.ErrorModelResponse}})
 async def get_number_of_people_per_sensor(
         url: str = Path(..., description="Url adresa místa", example="dcuk"),
         start: datetime = Query(..., description="Startovní datum a čas", example="2024-08-21T08:00:00"),
@@ -472,3 +472,4 @@ def fetch_records(url: str, start: str, stop: str) -> Dict:
         return response.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+        ##

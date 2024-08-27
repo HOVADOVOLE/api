@@ -33,5 +33,5 @@ class SensorEstimation(BaseModel):
     time_estimates: List[TimeEstimate]
 class SensorsEstimatesResponse(BaseModel):
     sensors_estimates: Dict[str, SensorEstimation]
-class NotFoundModel(BaseModel):
+class ErrorModelResponse(BaseModel):
     detail: str
